@@ -2,10 +2,16 @@
 
 ## Unreleased
 
+## v0.1.1 - 2026-07-08
+
 - Added CI workflow for formatting, clippy, tests, and release builds.
 - Added release binary packaging workflow for GitHub Releases.
 - Added raw Windows `releasepilot.exe` release asset packaging.
 - Documented binary installation and PATH usage.
+- Fixed cross-platform path safety validation for Windows-style absolute paths in CI.
+
+## v0.1.0 - 2026-07-07
+
 - Added explicit `--target` support for `init`, `check`, and `report`.
 - Changed `init` to preview by default and require `--write` for file creation.
 - Added `--dry-run`, `--write`, and `--yes` init safety flags.
