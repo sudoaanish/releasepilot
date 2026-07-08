@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 pub fn validate_config_path(value: &str, label: &str) -> Result<()> {
     let path = Path::new(value);
-    if path.is_absolute() {
+    if path.is_absolute() || looks_like_windows_absolute_path(value) {
         return Err(anyhow!(
             "{label} must be relative and stay inside the target: {value}"
         ));
@@ -21,6 +21,17 @@ pub fn validate_config_path(value: &str, label: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn looks_like_windows_absolute_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let drive_absolute = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    let unc_absolute = value.starts_with("\\\\") || value.starts_with("//");
+
+    drive_absolute || unc_absolute
 }
 
 pub fn safe_join(root: &Path, value: &str, label: &str) -> Result<PathBuf> {
@@ -76,6 +87,8 @@ mod tests {
     #[test]
     fn rejects_absolute_path() {
         assert!(validate_config_path("C:\\secrets\\.env", "version file").is_err());
+        assert!(validate_config_path("C:/secrets/.env", "version file").is_err());
+        assert!(validate_config_path("\\\\server\\share\\.env", "version file").is_err());
     }
 
     #[test]
