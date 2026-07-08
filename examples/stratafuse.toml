@@ -1,0 +1,16 @@
+[project]
+name = "StrataFuse"
+type = "tauri"
+version_files = ["package.json", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "update.json"]
+
+[git]
+main_branch = "main"
+tag_prefix = "v"
+require_clean_tree = true
+
+[artifacts]
+required = []
+
+[checks]
+required_files = ["README.md", "LICENSE", "update.json"]
+forbidden_strings = ["localhost", "/main/update.json"]

@@ -1,0 +1,16 @@
+[project]
+name = "PAKFLIX"
+type = "android"
+version_files = ["app/build.gradle.kts"]
+
+[git]
+main_branch = "main"
+tag_prefix = "v"
+require_clean_tree = true
+
+[artifacts]
+required = []
+
+[checks]
+required_files = ["README.md", "LICENSE", "CONTRIBUTORS.md"]
+forbidden_strings = ["localhost"]

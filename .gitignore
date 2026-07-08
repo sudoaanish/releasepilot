@@ -1,0 +1,18 @@
+# Build artifacts
+/target
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Private workspace (must not be public-facing)
+workspace/
+
+# Generated config (users create their own)
+releasepilot.toml

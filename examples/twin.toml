@@ -1,0 +1,16 @@
+[project]
+name = "twin"
+type = "go"
+version_files = ["go.mod"]
+
+[git]
+main_branch = "main"
+tag_prefix = "v"
+require_clean_tree = true
+
+[artifacts]
+required = []
+
+[checks]
+required_files = ["README.md", "LICENSE"]
+forbidden_strings = []
