@@ -1,9 +1,17 @@
-use crate::checks::{ReportData, Severity, CheckStatus};
+use crate::checks::{CheckStatus, ReportData, Severity};
 
 /// Print readiness report in user-friendly console format
 pub fn render_text(data: &ReportData) {
-    let blockers: Vec<_> = data.check_results.iter().filter(|r| r.status == CheckStatus::Fail && r.severity == Severity::Blocker).collect();
-    let warnings: Vec<_> = data.check_results.iter().filter(|r| r.status == CheckStatus::Fail && r.severity == Severity::Warning).collect();
+    let blockers: Vec<_> = data
+        .check_results
+        .iter()
+        .filter(|r| r.status == CheckStatus::Fail && r.severity == Severity::Blocker)
+        .collect();
+    let warnings: Vec<_> = data
+        .check_results
+        .iter()
+        .filter(|r| r.status == CheckStatus::Fail && r.severity == Severity::Warning)
+        .collect();
 
     let status_str = if !blockers.is_empty() {
         "BLOCKED (Fix blockers before releasing)"
@@ -18,18 +26,30 @@ pub fn render_text(data: &ReportData) {
     println!("═════════════════════════════════════════════════════════════");
     println!();
     println!("Status:            {}", status_str);
-    println!("Project:           {} ({})", data.project_name, data.project_type);
+    println!(
+        "Project:           {} ({})",
+        data.project_name, data.project_type
+    );
     println!();
 
     println!("─── Git State ───");
+    if let Some(error) = &data.git_error {
+        println!("  Git Error:       {}", error);
+    }
     if data.in_git_repo {
-        println!("  Clean Tree:      {}", if data.is_git_clean { "Yes" } else { "No" });
+        println!(
+            "  Clean Tree:      {}",
+            if data.is_git_clean { "Yes" } else { "No" }
+        );
         if !data.is_git_clean {
             for file in &data.dirty_files {
                 println!("                   - {}", file);
             }
         }
-        println!("  Branch:          {} (Expected: {})", data.current_branch, data.expected_branch);
+        println!(
+            "  Branch:          {} (Expected: {})",
+            data.current_branch, data.expected_branch
+        );
         if let Some(ref tag) = data.latest_tag {
             println!("  Latest Tag:      {}", tag);
         } else {
@@ -38,6 +58,8 @@ pub fn render_text(data: &ReportData) {
         if let Some(commits) = data.commits_since_tag {
             println!("  Commits Since:   {}", commits);
         }
+    } else if data.git_error.is_some() {
+        println!("  Git repository state unavailable.");
     } else {
         println!("  Not a Git repository.");
     }
@@ -50,9 +72,23 @@ pub fn render_text(data: &ReportData) {
         for (file, version) in &data.file_versions {
             println!("  {:<16} {}", file, version.as_deref().unwrap_or("Unknown"));
         }
-        println!("  Consistent:      {}", if data.versions_consistent { "Yes" } else { "No" });
+        println!(
+            "  Consistent:      {}",
+            if data.versions_consistent {
+                "Yes"
+            } else {
+                "No"
+            }
+        );
         if data.latest_tag.is_some() {
-            println!("  Progression:     {}", if data.versions_greater_than_tag { "Valid" } else { "Invalid / Needs Bump" });
+            println!(
+                "  Progression:     {}",
+                if data.versions_greater_than_tag {
+                    "Valid"
+                } else {
+                    "Invalid / Needs Bump"
+                }
+            );
         }
     }
     println!();
@@ -97,7 +133,10 @@ pub fn render_text(data: &ReportData) {
             println!("    - {}", secret);
         }
     } else if !data.secrets_info.recommended_secrets.is_empty() {
-        println!("  No workflows analyzed. Recommendations for project type '{}':", data.project_type);
+        println!(
+            "  No workflows analyzed. Recommendations for project type '{}':",
+            data.project_type
+        );
         for secret in &data.secrets_info.recommended_secrets {
             println!("    - {}", secret);
         }
@@ -128,7 +167,10 @@ pub fn render_text(data: &ReportData) {
         actions.push("Commit or stash your local git changes.".to_string());
     }
     if data.in_git_repo && data.current_branch != data.expected_branch {
-        actions.push(format!("Switch to the configured main branch '{}'.", data.expected_branch));
+        actions.push(format!(
+            "Switch to the configured main branch '{}'.",
+            data.expected_branch
+        ));
     }
     if !data.versions_consistent {
         actions.push("Align version numbers across all configured version files.".to_string());
@@ -143,18 +185,29 @@ pub fn render_text(data: &ReportData) {
     }
     for (glob, matched) in &data.artifacts_status {
         if !*matched {
-            actions.push(format!("Build the project to generate the required artifact matching '{}'.", glob));
+            actions.push(format!(
+                "Build the project to generate the required artifact matching '{}'.",
+                glob
+            ));
         }
     }
     if !data.forbidden_strings_results.is_empty() {
-        actions.push("Remove all forbidden debug/localhost strings from version files.".to_string());
+        actions
+            .push("Remove all forbidden debug/localhost strings from version files.".to_string());
     }
     if !data.secrets_info.found_in_workflows.is_empty() {
-        actions.push("Verify that all detected GitHub Action secrets are set in repository settings.".to_string());
+        actions.push(
+            "Verify that all detected GitHub Action secrets are set in repository settings."
+                .to_string(),
+        );
     }
 
-    if actions.is_empty() {
+    if actions.is_empty() && blockers.is_empty() && warnings.is_empty() {
         actions.push("Everything is ready! Tag and publish your release.".to_string());
+    } else if actions.is_empty() && !blockers.is_empty() {
+        actions.push("Resolve all blockers before tagging or publishing this release.".to_string());
+    } else if actions.is_empty() {
+        actions.push("Review warnings before tagging or publishing this release.".to_string());
     }
 
     for action in actions {
@@ -165,8 +218,16 @@ pub fn render_text(data: &ReportData) {
 
 /// Render readiness report in Markdown format
 pub fn render_markdown(data: &ReportData) -> String {
-    let blockers: Vec<_> = data.check_results.iter().filter(|r| r.status == CheckStatus::Fail && r.severity == Severity::Blocker).collect();
-    let warnings: Vec<_> = data.check_results.iter().filter(|r| r.status == CheckStatus::Fail && r.severity == Severity::Warning).collect();
+    let blockers: Vec<_> = data
+        .check_results
+        .iter()
+        .filter(|r| r.status == CheckStatus::Fail && r.severity == Severity::Blocker)
+        .collect();
+    let warnings: Vec<_> = data
+        .check_results
+        .iter()
+        .filter(|r| r.status == CheckStatus::Fail && r.severity == Severity::Warning)
+        .collect();
 
     let status_str = if !blockers.is_empty() {
         "🔴 BLOCKED"
@@ -179,7 +240,10 @@ pub fn render_markdown(data: &ReportData) -> String {
     let mut md = String::new();
     md.push_str("# ReleasePilot - Release Readiness Report\n\n");
     md.push_str(&format!("**Status:** {}\n", status_str));
-    md.push_str(&format!("**Project:** {} (`{}`)\n\n", data.project_name, data.project_type));
+    md.push_str(&format!(
+        "**Project:** {} (`{}`)\n\n",
+        data.project_name, data.project_type
+    ));
 
     md.push_str("## Summary\n\n");
     md.push_str("| Check | Status | Details |\n");
@@ -187,28 +251,42 @@ pub fn render_markdown(data: &ReportData) -> String {
     for res in &data.check_results {
         let status_emoji = match res.status {
             CheckStatus::Pass => "✅",
-            CheckStatus::Fail => {
-                match res.severity {
-                    Severity::Blocker => "❌",
-                    Severity::Warning => "⚠️",
-                    Severity::Info => "ℹ️",
-                }
-            }
+            CheckStatus::Fail => match res.severity {
+                Severity::Blocker => "❌",
+                Severity::Warning => "⚠️",
+                Severity::Info => "ℹ️",
+            },
             CheckStatus::Info => "ℹ️",
         };
-        md.push_str(&format!("| {} | {} | {} |\n", res.name, status_emoji, res.message));
+        md.push_str(&format!(
+            "| {} | {} | {} |\n",
+            res.name, status_emoji, res.message
+        ));
     }
     md.push('\n');
 
     md.push_str("## Git State\n\n");
+    if let Some(error) = &data.git_error {
+        md.push_str(&format!("- **Git Error:** {}\n", error));
+    }
     if data.in_git_repo {
-        md.push_str(&format!("- **Working Tree Clean:** {}\n", if data.is_git_clean { "Yes" } else { "No (changes pending)" }));
+        md.push_str(&format!(
+            "- **Working Tree Clean:** {}\n",
+            if data.is_git_clean {
+                "Yes"
+            } else {
+                "No (changes pending)"
+            }
+        ));
         if !data.is_git_clean {
             for file in &data.dirty_files {
                 md.push_str(&format!("  - `{}`\n", file));
             }
         }
-        md.push_str(&format!("- **Current Branch:** `{}` (Expected: `{}`)\n", data.current_branch, data.expected_branch));
+        md.push_str(&format!(
+            "- **Current Branch:** `{}` (Expected: `{}`)\n",
+            data.current_branch, data.expected_branch
+        ));
         if let Some(ref tag) = data.latest_tag {
             md.push_str(&format!("- **Latest Tag:** `{}`\n", tag));
         } else {
@@ -217,6 +295,8 @@ pub fn render_markdown(data: &ReportData) -> String {
         if let Some(commits) = data.commits_since_tag {
             md.push_str(&format!("- **Commits Since Tag:** {}\n", commits));
         }
+    } else if data.git_error.is_some() {
+        md.push_str("*Git repository state unavailable.*\n");
     } else {
         md.push_str("*Not inside a Git repository.*\n");
     }
@@ -229,12 +309,30 @@ pub fn render_markdown(data: &ReportData) -> String {
         md.push_str("| File | Version |\n");
         md.push_str("|---|---|\n");
         for (file, version) in &data.file_versions {
-            md.push_str(&format!("| `{}` | `{}` |\n", file, version.as_deref().unwrap_or("Unknown")));
+            md.push_str(&format!(
+                "| `{}` | `{}` |\n",
+                file,
+                version.as_deref().unwrap_or("Unknown")
+            ));
         }
         md.push('\n');
-        md.push_str(&format!("- **Versions Consistent:** {}\n", if data.versions_consistent { "Yes" } else { "No" }));
+        md.push_str(&format!(
+            "- **Versions Consistent:** {}\n",
+            if data.versions_consistent {
+                "Yes"
+            } else {
+                "No"
+            }
+        ));
         if data.latest_tag.is_some() {
-            md.push_str(&format!("- **Tag Progression Check:** {}\n", if data.versions_greater_than_tag { "Passed" } else { "Failed" }));
+            md.push_str(&format!(
+                "- **Tag Progression Check:** {}\n",
+                if data.versions_greater_than_tag {
+                    "Passed"
+                } else {
+                    "Failed"
+                }
+            ));
         }
     }
     md.push('\n');
@@ -244,7 +342,11 @@ pub fn render_markdown(data: &ReportData) -> String {
         md.push_str("*No required files configured.*\n");
     } else {
         for (file, exists) in &data.required_files_status {
-            md.push_str(&format!("- [{}] `{}`\n", if *exists { "x" } else { " " }, file));
+            md.push_str(&format!(
+                "- [{}] `{}`\n",
+                if *exists { "x" } else { " " },
+                file
+            ));
         }
     }
     md.push('\n');
@@ -254,7 +356,11 @@ pub fn render_markdown(data: &ReportData) -> String {
         md.push_str("*No artifacts configured.*\n");
     } else {
         for (glob, matched) in &data.artifacts_status {
-            md.push_str(&format!("- [{}] Glob `{}`\n", if *matched { "x" } else { " " }, glob));
+            md.push_str(&format!(
+                "- [{}] Glob `{}`\n",
+                if *matched { "x" } else { " " },
+                glob
+            ));
         }
     }
     md.push('\n');
@@ -267,7 +373,10 @@ pub fn render_markdown(data: &ReportData) -> String {
         md.push_str("|---|---|---|\n");
         for res in &data.forbidden_strings_results {
             for (line, pattern) in &res.matches {
-                md.push_str(&format!("| `{}` | {} | `{}` |\n", res.file_path, line, pattern));
+                md.push_str(&format!(
+                    "| `{}` | {} | `{}` |\n",
+                    res.file_path, line, pattern
+                ));
             }
         }
     }
@@ -311,7 +420,10 @@ pub fn render_markdown(data: &ReportData) -> String {
         actions.push("Commit or stash your local git changes.".to_string());
     }
     if data.in_git_repo && data.current_branch != data.expected_branch {
-        actions.push(format!("Switch to the configured main branch `{}`.", data.expected_branch));
+        actions.push(format!(
+            "Switch to the configured main branch `{}`.",
+            data.expected_branch
+        ));
     }
     if !data.versions_consistent {
         actions.push("Align version numbers across all configured version files.".to_string());
@@ -326,18 +438,29 @@ pub fn render_markdown(data: &ReportData) -> String {
     }
     for (glob, matched) in &data.artifacts_status {
         if !*matched {
-            actions.push(format!("Build the project to generate the required artifact matching `{}`.", glob));
+            actions.push(format!(
+                "Build the project to generate the required artifact matching `{}`.",
+                glob
+            ));
         }
     }
     if !data.forbidden_strings_results.is_empty() {
-        actions.push("Remove all forbidden debug/localhost strings from version files.".to_string());
+        actions
+            .push("Remove all forbidden debug/localhost strings from version files.".to_string());
     }
     if !data.secrets_info.found_in_workflows.is_empty() {
-        actions.push("Verify that all detected GitHub Action secrets are set in repository settings.".to_string());
+        actions.push(
+            "Verify that all detected GitHub Action secrets are set in repository settings."
+                .to_string(),
+        );
     }
 
-    if actions.is_empty() {
+    if actions.is_empty() && blockers.is_empty() && warnings.is_empty() {
         actions.push("Everything is ready! Tag and publish your release.".to_string());
+    } else if actions.is_empty() && !blockers.is_empty() {
+        actions.push("Resolve all blockers before tagging or publishing this release.".to_string());
+    } else if actions.is_empty() {
+        actions.push("Review warnings before tagging or publishing this release.".to_string());
     }
 
     for action in actions {
@@ -345,4 +468,68 @@ pub fn render_markdown(data: &ReportData) -> String {
     }
 
     md
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_markdown;
+    use crate::checks::{CheckResult, CheckStatus, ReportData, Severity};
+    use crate::secrets::SecretsCheck;
+    use std::collections::HashMap;
+
+    fn report_with_warning() -> ReportData {
+        ReportData {
+            project_name: "fixture".to_string(),
+            project_type: "rust".to_string(),
+            in_git_repo: true,
+            git_error: None,
+            is_git_clean: true,
+            dirty_files: vec![],
+            current_branch: "main".to_string(),
+            expected_branch: "main".to_string(),
+            latest_tag: None,
+            commits_since_tag: None,
+            file_versions: HashMap::new(),
+            versions_consistent: true,
+            versions_greater_than_tag: true,
+            required_files_status: vec![],
+            artifacts_status: vec![],
+            forbidden_strings_results: vec![],
+            secrets_info: SecretsCheck {
+                found_in_workflows: vec![],
+                recommended_secrets: vec![],
+            },
+            check_results: vec![CheckResult {
+                name: "Latest Git Tag".to_string(),
+                status: CheckStatus::Fail,
+                message: "No tags starting with prefix 'v' found.".to_string(),
+                severity: Severity::Warning,
+            }],
+        }
+    }
+
+    fn report_with_blocker() -> ReportData {
+        let mut report = report_with_warning();
+        report.check_results = vec![CheckResult {
+            name: "Git Repository".to_string(),
+            status: CheckStatus::Fail,
+            message: "Git command failed while inspecting target.".to_string(),
+            severity: Severity::Blocker,
+        }];
+        report
+    }
+
+    #[test]
+    fn warning_report_does_not_claim_everything_ready() {
+        let md = render_markdown(&report_with_warning());
+        assert!(!md.contains("Everything is ready! Tag and publish your release."));
+        assert!(md.contains("Review warnings before tagging or publishing this release."));
+    }
+
+    #[test]
+    fn blocker_report_does_not_claim_everything_ready() {
+        let md = render_markdown(&report_with_blocker());
+        assert!(!md.contains("Everything is ready! Tag and publish your release."));
+        assert!(md.contains("Resolve all blockers before tagging or publishing this release."));
+    }
 }

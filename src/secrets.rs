@@ -1,8 +1,8 @@
-use std::fs;
-use std::path::Path;
-use std::collections::HashSet;
 use anyhow::Result;
 use regex::Regex;
+use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct SecretsCheck {
@@ -47,13 +47,15 @@ pub fn check_github_secrets<P: AsRef<Path>>(root: P, project_type: &str) -> Resu
         }
         "android" => {
             // Android uses a keystore to sign release APKs
-            recommended_secrets.push("ANDROID_KEYSTORE_BASE64 (or project-specific keystore secret)".to_string());
+            recommended_secrets
+                .push("ANDROID_KEYSTORE_BASE64 (or project-specific keystore secret)".to_string());
             recommended_secrets.push("ANDROID_KEYSTORE_PASSWORD".to_string());
             recommended_secrets.push("ANDROID_KEY_ALIAS".to_string());
             recommended_secrets.push("ANDROID_KEY_PASSWORD".to_string());
         }
         "rust" => {
-            recommended_secrets.push("CARGO_REGISTRY_TOKEN (if publishing to crates.io)".to_string());
+            recommended_secrets
+                .push("CARGO_REGISTRY_TOKEN (if publishing to crates.io)".to_string());
         }
         "node-vite" => {
             recommended_secrets.push("NPM_TOKEN (if publishing to npm registry)".to_string());

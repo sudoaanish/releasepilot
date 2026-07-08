@@ -1,12 +1,13 @@
 use crate::config::Config;
 use crate::git;
-use crate::version;
+use crate::path_safety;
 use crate::secrets::{self, SecretsCheck};
-use std::path::Path;
-use std::collections::HashMap;
-use std::fs;
+use crate::version;
 use anyhow::Result;
 use glob::glob;
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckStatus {
@@ -41,6 +42,7 @@ pub struct ReportData {
     pub project_name: String,
     pub project_type: String,
     pub in_git_repo: bool,
+    pub git_error: Option<String>,
     pub is_git_clean: bool,
     pub dirty_files: Vec<String>,
     pub current_branch: String,
@@ -51,7 +53,7 @@ pub struct ReportData {
     pub versions_consistent: bool,
     pub versions_greater_than_tag: bool,
     pub required_files_status: Vec<(String, bool)>, // (file_path, exists)
-    pub artifacts_status: Vec<(String, bool)>, // (glob_pattern, has_match)
+    pub artifacts_status: Vec<(String, bool)>,      // (glob_pattern, has_match)
     pub forbidden_strings_results: Vec<FileForbiddenStrings>,
     pub secrets_info: SecretsCheck,
     pub check_results: Vec<CheckResult>,
@@ -91,46 +93,117 @@ pub fn compare_versions(v1: &str, v2: &str) -> std::cmp::Ordering {
 /// Run all checkers based on config
 pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
     let mut check_results = Vec::new();
+    path_safety::validate_config(config)?;
 
     // 1. Git State Check
-    let in_git_repo = git::is_in_git_repo();
+    let mut in_git_repo = false;
+    let mut git_error = None;
     let mut is_git_clean = true;
     let mut dirty_files = Vec::new();
     let mut current_branch = String::new();
     let mut latest_tag_val = None;
     let mut commits_since_tag = None;
 
+    match git::is_in_git_repo(root) {
+        Ok(true) => {
+            in_git_repo = true;
+        }
+        Ok(false) => {
+            check_results.push(CheckResult {
+                name: "Git Repository".to_string(),
+                status: CheckStatus::Fail,
+                message: "Target is not inside a Git repository. Git state checks skipped."
+                    .to_string(),
+                severity: Severity::Warning,
+            });
+        }
+        Err(err) => {
+            let severity = match err.kind {
+                git::GitErrorKind::NotRepository => Severity::Warning,
+                _ if config.git.require_clean_tree => Severity::Blocker,
+                _ => Severity::Warning,
+            };
+            let message = match err.kind {
+                git::GitErrorKind::NotRepository => {
+                    format!("Target is not inside a Git repository: {}", err.message)
+                }
+                git::GitErrorKind::GitMissing => {
+                    format!(
+                        "Git executable missing. Git state checks could not run: {}",
+                        err.message
+                    )
+                }
+                git::GitErrorKind::DubiousOwnership => {
+                    format!(
+                        "Git refused the target because of repository ownership/safe.directory: {}",
+                        err.message
+                    )
+                }
+                git::GitErrorKind::Other => {
+                    format!(
+                        "Git command failed while inspecting target: {}",
+                        err.message
+                    )
+                }
+            };
+            git_error = Some(message.clone());
+            check_results.push(CheckResult {
+                name: "Git Repository".to_string(),
+                status: CheckStatus::Fail,
+                message,
+                severity,
+            });
+        }
+    }
+
     if in_git_repo {
         // Clean working tree check
-        if let Ok((clean, files)) = git::is_clean() {
-            is_git_clean = clean;
-            dirty_files = files;
-            if config.git.require_clean_tree && !is_git_clean {
+        match git::is_clean(root) {
+            Ok((clean, files)) => {
+                is_git_clean = clean;
+                dirty_files = files;
+                if config.git.require_clean_tree && !is_git_clean {
+                    check_results.push(CheckResult {
+                        name: "Git Working Tree Clean".to_string(),
+                        status: CheckStatus::Fail,
+                        message: format!(
+                            "Git working tree has {} uncommitted change(s).",
+                            dirty_files.len()
+                        ),
+                        severity: Severity::Blocker,
+                    });
+                } else if !is_git_clean {
+                    check_results.push(CheckResult {
+                        name: "Git Working Tree Clean".to_string(),
+                        status: CheckStatus::Fail,
+                        message: "Git working tree is dirty (non-blocking).".to_string(),
+                        severity: Severity::Warning,
+                    });
+                } else {
+                    check_results.push(CheckResult {
+                        name: "Git Working Tree Clean".to_string(),
+                        status: CheckStatus::Pass,
+                        message: "Git working tree is clean.".to_string(),
+                        severity: Severity::Info,
+                    });
+                }
+            }
+            Err(err) => {
                 check_results.push(CheckResult {
                     name: "Git Working Tree Clean".to_string(),
                     status: CheckStatus::Fail,
-                    message: format!("Git working tree has {} uncommitted change(s).", dirty_files.len()),
-                    severity: Severity::Blocker,
-                });
-            } else if !is_git_clean {
-                check_results.push(CheckResult {
-                    name: "Git Working Tree Clean".to_string(),
-                    status: CheckStatus::Fail,
-                    message: "Git working tree is dirty (non-blocking).".to_string(),
-                    severity: Severity::Warning,
-                });
-            } else {
-                check_results.push(CheckResult {
-                    name: "Git Working Tree Clean".to_string(),
-                    status: CheckStatus::Pass,
-                    message: "Git working tree is clean.".to_string(),
-                    severity: Severity::Info,
+                    message: format!("Git status failed: {}", err.message),
+                    severity: if config.git.require_clean_tree {
+                        Severity::Blocker
+                    } else {
+                        Severity::Warning
+                    },
                 });
             }
         }
 
         // Branch check
-        if let Ok(branch) = git::current_branch() {
+        if let Ok(branch) = git::current_branch(root) {
             current_branch = branch;
             if current_branch == config.git.main_branch {
                 check_results.push(CheckResult {
@@ -143,14 +216,17 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
                 check_results.push(CheckResult {
                     name: "Git Branch".to_string(),
                     status: CheckStatus::Fail,
-                    message: format!("On branch '{}', expected '{}'.", current_branch, config.git.main_branch),
+                    message: format!(
+                        "On branch '{}', expected '{}'.",
+                        current_branch, config.git.main_branch
+                    ),
                     severity: Severity::Warning,
                 });
             }
         }
 
         // Tag check
-        if let Ok(tag) = git::latest_tag(&config.git.tag_prefix) {
+        if let Ok(tag) = git::latest_tag(root, &config.git.tag_prefix) {
             latest_tag_val = tag;
             if let Some(ref tag_str) = latest_tag_val {
                 check_results.push(CheckResult {
@@ -160,20 +236,26 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
                     severity: Severity::Info,
                 });
 
-                if let Ok(commits) = git::commits_since_tag(tag_str) {
+                if let Ok(commits) = git::commits_since_tag(root, tag_str) {
                     commits_since_tag = Some(commits);
                     if commits > 0 {
                         check_results.push(CheckResult {
                             name: "Commits Since Tag".to_string(),
                             status: CheckStatus::Pass,
-                            message: format!("{} commit(s) since latest tag '{}'.", commits, tag_str),
+                            message: format!(
+                                "{} commit(s) since latest tag '{}'.",
+                                commits, tag_str
+                            ),
                             severity: Severity::Info,
                         });
                     } else {
                         check_results.push(CheckResult {
                             name: "Commits Since Tag".to_string(),
                             status: CheckStatus::Fail,
-                            message: format!("No commits since latest tag '{}'. Version is already tagged.", tag_str),
+                            message: format!(
+                                "No commits since latest tag '{}'. Version is already tagged.",
+                                tag_str
+                            ),
                             severity: Severity::Warning,
                         });
                     }
@@ -182,25 +264,21 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
                 check_results.push(CheckResult {
                     name: "Latest Git Tag".to_string(),
                     status: CheckStatus::Fail,
-                    message: format!("No tags starting with prefix '{}' found.", config.git.tag_prefix),
+                    message: format!(
+                        "No tags starting with prefix '{}' found.",
+                        config.git.tag_prefix
+                    ),
                     severity: Severity::Info,
                 });
             }
         }
-    } else {
-        check_results.push(CheckResult {
-            name: "Git Repository".to_string(),
-            status: CheckStatus::Fail,
-            message: "Not inside a Git repository. Git state checks skipped.".to_string(),
-            severity: Severity::Warning,
-        });
     }
 
     // 2. Version State Checks
     let mut file_versions = HashMap::new();
     let mut extracted_versions = Vec::new();
     for file in &config.project.version_files {
-        let path = root.join(file);
+        let path = path_safety::safe_join(root, file, "version file")?;
         if path.exists() {
             match version::extract_version_from_file(&path) {
                 Ok(Some(v)) => {
@@ -238,8 +316,10 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
                 check_results.push(CheckResult {
                     name: "Version Consistency".to_string(),
                     status: CheckStatus::Fail,
-                    message: format!("Mismatched versions: '{}' has '{}' vs '{}' has '{}'", 
-                        extracted_versions[0].0, first_ver, file, ver),
+                    message: format!(
+                        "Mismatched versions: '{}' has '{}' vs '{}' has '{}'",
+                        extracted_versions[0].0, first_ver, file, ver
+                    ),
                     severity: Severity::Warning,
                 });
                 break;
@@ -251,7 +331,10 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
         check_results.push(CheckResult {
             name: "Version Consistency".to_string(),
             status: CheckStatus::Pass,
-            message: format!("All version files are consistent at version '{}'.", extracted_versions[0].1),
+            message: format!(
+                "All version files are consistent at version '{}'.",
+                extracted_versions[0].1
+            ),
             severity: Severity::Info,
         });
     }
@@ -266,7 +349,10 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
                     check_results.push(CheckResult {
                         name: "Version Progress".to_string(),
                         status: CheckStatus::Fail,
-                        message: format!("Current project version '{}' is older than latest tag '{}'.", file_ver, tag),
+                        message: format!(
+                            "Current project version '{}' is older than latest tag '{}'.",
+                            file_ver, tag
+                        ),
                         severity: Severity::Warning,
                     });
                 }
@@ -285,7 +371,10 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
                     check_results.push(CheckResult {
                         name: "Version Progress".to_string(),
                         status: CheckStatus::Pass,
-                        message: format!("Current project version '{}' is bumped past latest tag '{}'.", file_ver, tag),
+                        message: format!(
+                            "Current project version '{}' is bumped past latest tag '{}'.",
+                            file_ver, tag
+                        ),
                         severity: Severity::Info,
                     });
                 }
@@ -296,7 +385,7 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
     // 3. Required Files check
     let mut required_files_status = Vec::new();
     for file in &config.checks.required_files {
-        let path = root.join(file);
+        let path = path_safety::safe_join(root, file, "required file")?;
         let exists = path.exists();
         required_files_status.push((file.clone(), exists));
         if exists {
@@ -319,7 +408,7 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
     // 4. Artifacts check
     let mut artifacts_status = Vec::new();
     for pattern in &config.artifacts.required {
-        let glob_path = root.join(pattern);
+        let glob_path = path_safety::safe_join(root, pattern, "artifact pattern")?;
         let glob_str = glob_path.to_string_lossy().into_owned();
         let has_match = match glob(&glob_str) {
             Ok(paths) => paths.filter_map(|r| r.ok()).count() > 0,
@@ -347,7 +436,7 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
     // 5. Forbidden Strings Scan
     let mut forbidden_strings_results = Vec::new();
     for file in &config.project.version_files {
-        let path = root.join(file);
+        let path = path_safety::safe_join(root, file, "version file")?;
         if path.is_file() {
             if let Ok(content) = fs::read_to_string(&path) {
                 let mut matches = Vec::new();
@@ -368,7 +457,10 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
                         check_results.push(CheckResult {
                             name: "Forbidden String Scan".to_string(),
                             status: CheckStatus::Fail,
-                            message: format!("Forbidden string '{}' found in {} at line {}.", pattern, file, line_num),
+                            message: format!(
+                                "Forbidden string '{}' found in {} at line {}.",
+                                pattern, file, line_num
+                            ),
                             severity: Severity::Blocker,
                         });
                     }
@@ -387,21 +479,27 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
 
     // 6. GitHub Secrets Check
     let secrets_info = secrets::check_github_secrets(root, &config.project.project_type)?;
-    
+
     // Add check results for secrets
     if !secrets_info.found_in_workflows.is_empty() {
         check_results.push(CheckResult {
             name: "GitHub Repository Secrets".to_string(),
             status: CheckStatus::Info,
-            message: format!("Detected {} secret(s) referenced in GitHub Actions workflows.", secrets_info.found_in_workflows.len()),
+            message: format!(
+                "Detected {} secret(s) referenced in GitHub Actions workflows.",
+                secrets_info.found_in_workflows.len()
+            ),
             severity: Severity::Info,
         });
     } else if !secrets_info.recommended_secrets.is_empty() {
         check_results.push(CheckResult {
             name: "GitHub Repository Secrets".to_string(),
             status: CheckStatus::Info,
-            message: format!("No workflow files found. Recommending {} secret(s) based on project type '{}'.", 
-                secrets_info.recommended_secrets.len(), config.project.project_type),
+            message: format!(
+                "No workflow files found. Recommending {} secret(s) based on project type '{}'.",
+                secrets_info.recommended_secrets.len(),
+                config.project.project_type
+            ),
             severity: Severity::Info,
         });
     }
@@ -410,6 +508,7 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
         project_name: config.project.name.clone(),
         project_type: config.project.project_type.clone(),
         in_git_repo,
+        git_error,
         is_git_clean,
         dirty_files,
         current_branch,
@@ -425,4 +524,86 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
         secrets_info,
         check_results,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run_checks, CheckStatus, Severity};
+    use crate::config::{ArtifactsConfig, ChecksConfig, Config, GitConfig, ProjectConfig};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_dir(name: &str) -> PathBuf {
+        let root = std::env::var_os("RELEASEPILOT_TEST_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = root.join(format!("releasepilot-checks-{name}-{unique}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn base_config() -> Config {
+        Config {
+            project: ProjectConfig {
+                name: "fixture".to_string(),
+                project_type: "rust".to_string(),
+                version_files: vec!["Cargo.toml".to_string()],
+            },
+            git: GitConfig {
+                main_branch: "main".to_string(),
+                tag_prefix: "v".to_string(),
+                require_clean_tree: true,
+            },
+            artifacts: ArtifactsConfig { required: vec![] },
+            checks: ChecksConfig {
+                required_files: vec!["README.md".to_string(), "LICENSE".to_string()],
+                forbidden_strings: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn dirty_git_tree_blocks_release_when_required() {
+        let dir = test_dir("dirty");
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname='fixture'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        fs::write(dir.join("README.md"), "# fixture\n").unwrap();
+        fs::write(dir.join("LICENSE"), "MIT\n").unwrap();
+        Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .arg("init")
+            .output()
+            .unwrap();
+
+        let report = run_checks(&base_config(), &dir).unwrap();
+        let _ = fs::remove_dir_all(dir);
+
+        assert!(report.check_results.iter().any(|result| {
+            result.name == "Git Working Tree Clean"
+                && result.status == CheckStatus::Fail
+                && result.severity == Severity::Blocker
+        }));
+    }
+
+    #[test]
+    fn config_paths_cannot_escape_root() {
+        let dir = test_dir("escape");
+        let mut config = base_config();
+        config.project.version_files = vec!["../Cargo.toml".to_string()];
+
+        let result = run_checks(&config, &dir);
+        let _ = fs::remove_dir_all(dir);
+
+        assert!(result.is_err());
+    }
 }

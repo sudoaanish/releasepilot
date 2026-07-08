@@ -1,4 +1,4 @@
-use crate::config::{Config, ProjectConfig, GitConfig, ArtifactsConfig, ChecksConfig};
+use crate::config::{ArtifactsConfig, ChecksConfig, Config, GitConfig, ProjectConfig};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
