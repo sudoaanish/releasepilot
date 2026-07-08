@@ -251,12 +251,12 @@ pub fn run_checks(config: &Config, root: &Path) -> Result<ReportData> {
                     } else {
                         check_results.push(CheckResult {
                             name: "Commits Since Tag".to_string(),
-                            status: CheckStatus::Fail,
+                            status: CheckStatus::Pass,
                             message: format!(
-                                "No commits since latest tag '{}'. Version is already tagged.",
+                                "Latest tag '{}' points at HEAD. Version is already tagged.",
                                 tag_str
                             ),
-                            severity: Severity::Warning,
+                            severity: Severity::Info,
                         });
                     }
                 }
@@ -568,6 +568,40 @@ mod tests {
         }
     }
 
+    fn run_git(dir: &std::path::Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn create_clean_tagged_repo(name: &str) -> PathBuf {
+        let dir = test_dir(name);
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname='fixture'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        fs::write(dir.join("README.md"), "# fixture\n").unwrap();
+        fs::write(dir.join("LICENSE"), "MIT\n").unwrap();
+        run_git(&dir, &["init"]);
+        run_git(&dir, &["config", "user.email", "fixture@example.invalid"]);
+        run_git(&dir, &["config", "user.name", "Fixture"]);
+        run_git(&dir, &["add", "."]);
+        run_git(&dir, &["commit", "-m", "Initial fixture"]);
+        run_git(&dir, &["branch", "-M", "main"]);
+        run_git(&dir, &["tag", "v0.1.0"]);
+        dir
+    }
+
     #[test]
     fn dirty_git_tree_blocks_release_when_required() {
         let dir = test_dir("dirty");
@@ -605,5 +639,42 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn head_at_latest_tag_does_not_warn() {
+        let dir = create_clean_tagged_repo("tagged-head");
+
+        let report = run_checks(&base_config(), &dir).unwrap();
+        let _ = fs::remove_dir_all(dir);
+
+        assert!(report.check_results.iter().any(|result| {
+            result.name == "Commits Since Tag"
+                && result.status == CheckStatus::Pass
+                && result.severity == Severity::Info
+                && result.message.contains("points at HEAD")
+        }));
+        assert!(!report
+            .check_results
+            .iter()
+            .any(|result| result.severity == Severity::Warning));
+    }
+
+    #[test]
+    fn version_equal_to_tag_with_commits_since_tag_warns() {
+        let dir = create_clean_tagged_repo("post-tag-commit");
+        fs::write(dir.join("README.md"), "# fixture\n\nChanged after tag.\n").unwrap();
+        run_git(&dir, &["add", "README.md"]);
+        run_git(&dir, &["commit", "-m", "Change after tag"]);
+
+        let report = run_checks(&base_config(), &dir).unwrap();
+        let _ = fs::remove_dir_all(dir);
+
+        assert!(report.check_results.iter().any(|result| {
+            result.name == "Version Progress"
+                && result.status == CheckStatus::Fail
+                && result.severity == Severity::Warning
+                && result.message.contains("commits exist since the tag")
+        }));
     }
 }
