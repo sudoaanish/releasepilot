@@ -107,8 +107,17 @@ pub fn default_config_for(project_type: ProjectType, project_name: String) -> Co
     };
 
     let required_files = match project_type {
-        ProjectType::Android => vec!["README.md".to_string(), "LICENSE".to_string(), "CONTRIBUTORS.md".to_string()],
-        _ => vec!["README.md".to_string(), "LICENSE".to_string()],
+        ProjectType::Android => vec![
+            "README.md".to_string(),
+            "LICENSE".to_string(),
+            "CONTRIBUTORS.md".to_string(),
+            "releasepilot.toml".to_string(),
+        ],
+        _ => vec![
+            "README.md".to_string(),
+            "LICENSE".to_string(),
+            "releasepilot.toml".to_string(),
+        ],
     };
 
     let forbidden_strings = match project_type {
