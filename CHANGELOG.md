@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added CI workflow for formatting, clippy, tests, and release builds.
+- Added release binary packaging workflow for GitHub Releases.
+- Added raw Windows `releasepilot.exe` release asset packaging.
+- Documented binary installation and PATH usage.
 - Added explicit `--target` support for `init`, `check`, and `report`.
 - Changed `init` to preview by default and require `--write` for file creation.
 - Added `--dry-run`, `--write`, and `--yes` init safety flags.

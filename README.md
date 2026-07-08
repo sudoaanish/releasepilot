@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![ReleasePilot](https://img.shields.io/badge/status-v0.1.0--prep-yellow.svg)](#)
+[![ReleasePilot](https://img.shields.io/badge/version-v0.1.0-blue.svg)](https://github.com/sudoaanish/releasepilot/releases/tag/v0.1.0)
 
 ReleasePilot is a local release-readiness checker for open-source projects. It inspects your local repository state, detects the project type, runs basic release checks, scans for forbidden configurations/strings, checks for required GitHub Secrets in CI/CD workflows, and outputs a clear report.
 
@@ -15,7 +15,68 @@ ReleasePilot is a local release-readiness checker for open-source projects. It i
 - **Required Files Verification**: Ensures critical documentation (e.g. `README.md`, `LICENSE`) exists before tagging.
 - **GitHub Secrets Extraction**: Scans `.github/workflows` configurations statically to identify required repository secrets (e.g., keystores or signing keys) or recommends them based on project types.
 
-## Install and Build
+## Install
+
+### 1. Windows Quick Download
+
+Windows users can download the raw executable from the latest GitHub Release assets:
+
+- `releasepilot.exe`
+
+Place it in a folder on your user `PATH`. For example:
+
+```powershell
+mkdir $env:USERPROFILE\bin -Force
+Move-Item .\releasepilot.exe $env:USERPROFILE\bin\
+```
+
+If that folder is not already on your user `PATH`, add:
+
+```text
+%USERPROFILE%\bin
+```
+
+Verify:
+
+```powershell
+releasepilot --help
+releasepilot report --target C:\path\to\project --format md
+```
+
+### 2. Platform Archives
+
+You can also download the archive for your platform:
+
+- `releasepilot-x86_64-pc-windows-msvc.zip`
+- `releasepilot-x86_64-unknown-linux-gnu.tar.gz`
+- `releasepilot-x86_64-apple-darwin.tar.gz`
+- `releasepilot-aarch64-apple-darwin.tar.gz`
+
+Linux and macOS users may need to mark the binary executable:
+
+```bash
+chmod +x releasepilot
+```
+
+Then move it somewhere on `PATH`:
+
+```bash
+mkdir -p ~/.local/bin
+mv releasepilot ~/.local/bin/
+releasepilot --help
+```
+
+### 3. Cargo Install From GitHub
+
+If you already have Rust installed:
+
+```powershell
+cargo install --git https://github.com/sudoaanish/releasepilot
+```
+
+ReleasePilot is not published to crates.io yet.
+
+## Build From Source
 
 From the ReleasePilot repository:
 
@@ -35,8 +96,8 @@ cargo build --release
 ReleasePilot is a local tool. Prefer explicit target paths so you always know which project is being inspected:
 
 ```powershell
-releasepilot check --target D:\Projs\my-project
-releasepilot report --target D:\Projs\my-project --format md
+releasepilot check --target C:\path\to\project
+releasepilot report --target C:\path\to\project --format md
 ```
 
 `check` and `report` inspect the target and print to stdout. `init` is safer by default: it previews the generated config unless you explicitly pass `--write`.
@@ -45,10 +106,10 @@ releasepilot report --target D:\Projs\my-project --format md
 Detects the project type and previews a `releasepilot.toml` for the target.
 
 ```powershell
-releasepilot init --target D:\Projs\my-project
-releasepilot init --target D:\Projs\my-project --dry-run
-releasepilot init --target D:\Projs\my-project --write
-releasepilot init --target D:\Projs\my-project --write --force --yes
+releasepilot init --target C:\path\to\project
+releasepilot init --target C:\path\to\project --dry-run
+releasepilot init --target C:\path\to\project --write
+releasepilot init --target C:\path\to\project --write --force --yes
 ```
 
 Notes:
